@@ -57,6 +57,7 @@ class ImageTransformDataset(Dataset):
                            list(self.image_dir.glob("**/*.jpeg")) + \
                            list(self.image_dir.glob("**/*.png"))
         
+        print(f"The dataset has {len(self.image_paths)} samples.")
         # Basic resize transform that will always be applied first
         self.base_transform = A.Compose([
             A.Resize(height=image_size[0], width=image_size[1]),
@@ -73,7 +74,13 @@ class ImageTransformDataset(Dataset):
                 "elastic": A.ElasticTransform(p=1.0, alpha=30, sigma=60),
                 "perspective": A.Perspective(scale=(0.05, 0.1), p=1.0),
                 "random_brightness_contrast": A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
-                "coarse_dropout": A.CoarseDropout(p=1, num_holes_range=(6,8), fill="random", hole_height_range=(16,32), hole_width_range=(16,32),)
+                "coarse_dropout": A.CoarseDropout(
+                    p=1,
+                    num_holes_range=(6, 8),
+                    fill="random",
+                    hole_height_range=(16, 16), #changed max to 16.
+                    hole_width_range=(16, 16), #changed max to 16.
+                )
             }
         else:
             self.transforms_dict = transforms_dict
@@ -99,9 +106,15 @@ class ImageTransformDataset(Dataset):
         # Apply each transformation
         for name, transform in self.transforms_dict.items():
             # Apply the transformation, then the base resize/normalize
-            transformed = transform(image=image)["image"]
-            normalized = self.base_transform(image=transformed)["image"]
-            result[name] = self.processor_ready(normalized)
+            try:
+                transformed = transform(image=original)["image"]
+            except Exception as e:
+                print(f"exception occured for {name}")
+                print(f"exception {e}")
+                print("reverting to bse image\n")
+                transformed = image
+
+            result[name] = self.processor_ready(transformed)
             
         return result
     
@@ -174,7 +187,8 @@ def process_images(args):
     json_path = output_dir / "clip_embeddings.json"
     
     # Save as PyTorch file (preserves tensors)
-    torch.save(results, embedding_path)
+    # torch.save(results, embedding_path)
+    save_results_efficiently(results, output_dir)
     
     # Save as JSON for easier inspection
     with open(json_path, 'w') as f:
@@ -184,13 +198,32 @@ def process_images(args):
     print(f"  - {embedding_path} (PyTorch format)")
     print(f"  - {json_path} (JSON format)")
 
+def save_results_efficiently(results, output_dir):
+    """Save PyTorch results in chunks to avoid memory issues"""
+    output_path = output_dir / "clip_embeddings.pt"
+    
+    # Save in chunks of batch_size
+    chunk_size = args.batch_size 
+    final_results = []
+    
+    for i in range(0, len(results), chunk_size):
+        chunk = results[i:i+chunk_size]
+        final_results.extend(chunk)
+        
+        # Save the accumulated results so far
+        torch.save(final_results, output_path)
+        print(f"Saved {len(final_results)} of {len(results)} results")
+    
+    print(f"Successfully saved all {len(results)} results to {output_path}")
+    return final_results
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process images with CLIP and transformations")
     parser.add_argument("--image_dir", type=str, default="./dataset/", help="Directory containing images")
     parser.add_argument("--output_dir", type=str, default="./clip_output", help="Output directory")
     parser.add_argument("--model_name", type=str, default="openai/clip-vit-base-patch32", help="CLIP model name")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
-    parser.add_argument("--image_size", type=int, default=512, help="Image size for CLIP")
+    parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
+    parser.add_argument("--image_size", type=int, default=224, help="Image size for CLIP")
     parser.add_argument("--num_workers", type=int, default=2, help="Number of dataloader workers")
     parser.add_argument("--save_incremental", action="store_true", help="Save results incrementally")
     
