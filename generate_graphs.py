@@ -10,6 +10,7 @@ from pathlib import Path
 from main import ImageTransformDataset, CLIPImageProcessor
 from scipy.stats import gaussian_kde
 from torchvision.transforms import ToPILImage
+from PIL import Image
 
 def plot_image_augmentations(image_dir, image_size=(512, 512), output_path="augmentation_visualization.png"):
     """
@@ -313,31 +314,64 @@ def plot_distance_kde(embedding_pt_path, output_path="distance_kde.png"):
     plt.show()
     print(f"Distance KDE plot saved to {output_path}")
 
-def get_attention_map(clip_model, image):
+
+def get_attention_map(clip_processor, image):
     """
     Extracts the attention map from CLIP's last self-attention layer.
 
     Args:
-        clip_model (CLIPModel): Pretrained CLIP model.
+        clip_processor (CLIPImageProcessor): CLIP processor object.
         image (PIL.Image): Input image.
 
     Returns:
-        np.array: Attention map (scaled to image size).
+        np.array: Attention map (resized to image size).
     """
+    model = clip_processor.model
+    device = clip_processor.device
+    
     with torch.no_grad():
-        inputs = clip_model.processor(images=image, return_tensors="pt").to(clip_model.device)
+        # Process the image
+        inputs = clip_processor.processor(images=[image], return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
         
-        # Get the last self-attention layer
-        outputs = clip_model.model.vision_model(**inputs)
-        attention = outputs.attentions[-1]  # Last layer's attention
-
-        # Average over all heads
-        avg_attention = attention.mean(dim=1).squeeze(0).cpu().numpy()
+        # Get vision model
+        vision_model = model.vision_model
         
-        # Resize attention to match image size
-        attn_map = cv2.resize(avg_attention[0], (image.width, image.height))
-        attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min())  # Normalize
+        # We need to modify the forward call to return attentions
+        # This is specific to the ViT-based CLIP model
+        outputs = vision_model(
+            pixel_values=inputs['pixel_values'],
+            output_attentions=True
+        )
+        
+        # Get the last layer attention
+        if not hasattr(outputs, 'attentions') or outputs.attentions is None:
+            raise ValueError("Model did not return attention maps. Check model configuration.")
+        
+        # Shape: [batch_size, num_heads, sequence_length, sequence_length]
+        # We average over the heads dimension
+        attention = outputs.attentions[-1].mean(dim=1).squeeze(0).cpu().numpy()
+        
+        # Get CLS token attention (first token's attention to all other tokens)
+        cls_attention = attention[0, 1:]  # Skip the CLS token's attention to itself
+        
+        # Calculate grid size for the image patches
+        patch_size = vision_model.config.patch_size
+        img_size = vision_model.config.image_size
+        grid_size = img_size // patch_size
+        
+        # Reshape to 2D grid (excluding CLS token)
+        attn_map = cls_attention.reshape(grid_size, grid_size)
+        
+        # Resize to match original image size
+        attn_map = cv2.resize(attn_map, (image.width, image.height))
+        
+        # Normalize for visualization
+        if attn_map.max() > attn_map.min():  # Avoid division by zero
+            attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min())
+        
         return attn_map
+
 
 def overlay_attention(image, attention_map, alpha=0.5):
     """
@@ -351,70 +385,120 @@ def overlay_attention(image, attention_map, alpha=0.5):
     Returns:
         PIL.Image: Image with overlay.
     """
-    image_np = np.array(image).astype(np.float32) / 255.0  # Normalize
-    heatmap = cv2.applyColorMap(np.uint8(255 * attention_map), cv2.COLORMAP_JET)
-    heatmap = heatmap.astype(np.float32) / 255.0  # Normalize heatmap
+    # Convert PIL to numpy
+    image_np = np.array(image).astype(np.float32) / 255.0
+    
+    # Convert to uint8 for colormap application
+    attention_uint8 = np.uint8(255 * attention_map)
+    
+    # Apply colormap
+    heatmap = cv2.applyColorMap(attention_uint8, cv2.COLORMAP_JET)
+    
+    # Convert BGR to RGB
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    
+    # Normalize heatmap
+    heatmap = heatmap.astype(np.float32) / 255.0
+    
+    # Resize heatmap to match image size if needed
+    if heatmap.shape[:2] != image_np.shape[:2]:
+        heatmap = cv2.resize(heatmap, (image_np.shape[1], image_np.shape[0]))
+    
+    # Blend images
     overlay = cv2.addWeighted(image_np, 1 - alpha, heatmap, alpha, 0)
-    return ToPILImage()(np.uint8(overlay * 255))
+    
+    # Convert back to PIL
+    return Image.fromarray(np.uint8(overlay * 255))
 
-def plot_attention_maps(image_paths, clip_model, dataset, output_path="attention_maps.png"):
+
+def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attention_maps.png", num_samples=3):
     """
     Generates attention maps for original and augmented images and plots them.
 
     Args:
-        image_paths (list): List of image paths to process.
-        clip_model (CLIPImageProcessor): Initialized CLIP processor.
+        image_dir (str): Directory containing images.
+        clip_processor (CLIPImageProcessor): Initialized CLIP processor.
         dataset (ImageTransformDataset): Dataset object for augmentation.
         output_path (str): Path to save the final visualization.
+        num_samples (int): Number of sample images to process.
     """
-    num_images = len(image_paths)
-    num_augments = 6  # Pick first 6 augmentations
+    # Get a list of available images
+    image_paths = dataset.image_paths[:num_samples]  # Limit to specified number of samples
     
-    fig, axes = plt.subplots(num_images, num_augments + 2, figsize=(num_augments * 3, num_images * 3))
-
+    num_images = len(image_paths)
+    # Get augmentation keys (excluding image_path and original)
+    sample = dataset[0]
+    aug_keys = [key for key in sample.keys() if key not in ["image_path", "original"]]
+    num_augments = len(aug_keys)
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(num_images, num_augments + 2, figsize=(num_augments * 3 + 6, num_images * 3))
+    if num_images == 1:
+        axes = np.expand_dims(axes, axis=0)  # Handle case with single image
+    
     for i, image_path in enumerate(image_paths):
+        print(f"Processing image {i+1}/{num_images}: {image_path}")
+        
+        # Get index of this image in the dataset
+        idx = dataset.image_paths.index(image_path)
+        
         # Get transformed images
-        sample = dataset[i]
+        sample = dataset[idx]
         orig_image = sample["original"]
-        aug_keys = list(sample.keys())[1:num_augments + 1]  # Pick 6 augmentations
-
-        # Compute attention maps
-        orig_attn = get_attention_map(clip_model, orig_image)
-        orig_overlay = overlay_attention(orig_image, orig_attn)
-
-        # Compute original embedding
-        orig_embedding = clip_model.get_embeddings([orig_image]).numpy()
-
-        # Plot original image and its attention
-        axes[i, 0].imshow(orig_image)
-        axes[i, 0].set_title("Original", fontsize=12)
-        axes[i, 0].axis("off")
-
-        axes[i, 1].imshow(orig_overlay)
-        axes[i, 1].set_title("Original Attention", fontsize=12)
-        axes[i, 1].axis("off")
-
-        # Process each augmentation
-        for j, key in enumerate(aug_keys):
-            aug_image = sample[key]
-            aug_attn = get_attention_map(clip_model, aug_image)
-            aug_overlay = overlay_attention(aug_image, aug_attn)
-
-            # Compute similarity score
-            aug_embedding = clip_model.get_embeddings([aug_image]).numpy()
-            similarity = np.dot(orig_embedding, aug_embedding.T) / (
-                np.linalg.norm(orig_embedding) * np.linalg.norm(aug_embedding)
-            )
-
-            # Plot augmented image and attention
-            axes[i, j + 2].imshow(aug_overlay)
-            axes[i, j + 2].set_title(f"{key}\nSim: {similarity[0, 0]:.2f}", fontsize=10)
-            axes[i, j + 2].axis("off")
-
+        
+        # Compute attention map for original image
+        try:
+            orig_attn = get_attention_map(clip_processor, orig_image)
+            orig_overlay = overlay_attention(orig_image, orig_attn)
+            
+            # Get original embedding
+            orig_embedding = clip_processor.get_embeddings([orig_image]).numpy()
+            
+            # Plot original image and its attention
+            axes[i, 0].imshow(orig_image)
+            axes[i, 0].set_title("Original", fontsize=12)
+            axes[i, 0].axis("off")
+            
+            axes[i, 1].imshow(orig_overlay)
+            axes[i, 1].set_title("Attention Map", fontsize=12)
+            axes[i, 1].axis("off")
+            
+            # Process each augmentation
+            for j, key in enumerate(aug_keys):
+                aug_image = sample[key]
+                
+                try:
+                    # Get attention map
+                    aug_attn = get_attention_map(clip_processor, aug_image)
+                    aug_overlay = overlay_attention(aug_image, aug_attn)
+                    
+                    # Compute similarity score
+                    aug_embedding = clip_processor.get_embeddings([aug_image]).numpy()
+                    cos_sim = np.dot(orig_embedding.flatten(), aug_embedding.flatten()) / (
+                        np.linalg.norm(orig_embedding) * np.linalg.norm(aug_embedding)
+                    )
+                    
+                    # Plot augmented image with attention overlay
+                    axes[i, j + 2].imshow(aug_overlay)
+                    axes[i, j + 2].set_title(f"{key}\nSim: {cos_sim:.2f}", fontsize=10)
+                    axes[i, j + 2].axis("off")
+                    
+                except Exception as e:
+                    print(f"Error processing augmentation {key} for image {i}: {e}")
+                    axes[i, j + 2].text(0.5, 0.5, f"Error: {str(e)[:20]}...", 
+                                      horizontalalignment='center', verticalalignment='center')
+                    axes[i, j + 2].axis("off")
+            
+        except Exception as e:
+            print(f"Error processing image {i}: {e}")
+            axes[i, 0].text(0.5, 0.5, f"Error processing image: {str(e)[:50]}...", 
+                          horizontalalignment='center', verticalalignment='center')
+            axes[i, 0].axis("off")
+    
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
-    plt.show()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved attention visualization to {output_path}")
+    plt.close()
 
 if __name__ == "__main__":
     # Directory containing a single image (make sure this directory contains input_image.jpg)
@@ -428,15 +512,24 @@ if __name__ == "__main__":
 
     # plot_distance_bar_chart(embedding_file, output_path="distance_bar_chart.png")
     # plot_distance_kde(embedding_file, output_path="distance_kde.png")
-
-    images_dir = "./attention_mask/"
-    selected_paths = [Path(dir) for dir in os.listdir("./attention_mask/")]
+    images_dir = "./attention_mask/"  # Directory with a few sample images
+    output_dir = Path("./visualization_output/")
+    output_dir.mkdir(exist_ok=True, parents=True)
     
     # Initialize CLIP model
-    clip_model = CLIPImageProcessor(model_name="openai/clip-vit-base-patch32")
-
-    # Load dataset
-    dataset = ImageTransformDataset(image_dir=images_dir, image_size=(224, 224))
-
+    clip_processor = CLIPImageProcessor(model_name="openai/clip-vit-base-patch32")
+    
+    # Create dataset with transformations
+    dataset = ImageTransformDataset(
+        image_dir=images_dir,
+        image_size=(224, 224)
+    )
+    
     # Generate and save attention maps
-    plot_attention_maps(selected_paths, clip_model, dataset, output_path="attention_maps.png")
+    plot_attention_maps(
+        image_dir=images_dir,
+        clip_processor=clip_processor,
+        dataset=dataset,
+        output_path=str(output_dir / "attention_maps.png"),
+        num_samples=3  # Process 3 sample images
+    )
