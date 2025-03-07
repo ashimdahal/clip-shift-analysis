@@ -117,6 +117,34 @@ class ImageTransformDataset(Dataset):
             result[name] = self.processor_ready(transformed)
             
         return result
+
+    def from_file(self, image_path):
+        # Read image as RGB numpy array
+        image = np.array(Image.open(image_path).convert("RGB"))
+        
+        # Apply base transformation to ensure correct size and normalization
+        original = self.base_transform(image=image)["image"]
+        
+        # Store original image and transformations
+        result = {
+            "image_path": image_path,
+            "original": self.processor_ready(original)
+        }
+        
+        # Apply each transformation
+        for name, transform in self.transforms_dict.items():
+            # Apply the transformation, then the base resize/normalize
+            try:
+                transformed = transform(image=original)["image"]
+            except Exception as e:
+                print(f"exception occured for {name}")
+                print(f"exception {e}")
+                print("reverting to bse image\n")
+                transformed = image
+
+            result[name] = self.processor_ready(transformed)
+            
+        return result
     
     def processor_ready(self, img_array):
         """Convert normalized numpy array to PIL Image for CLIP processor"""
