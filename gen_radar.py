@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -7,12 +6,11 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-from tqdm import tqdm
 from matplotlib.gridspec import GridSpec
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from scipy.spatial.distance import pdist, squareform
 
-from generate_graphs import get_attention_map, cosine_similarity
+from generate_graphs import get_attention_map
 from main import ImageTransformDataset, CLIPImageProcessor
 
 def plot_augmentation_dendrogram(clip_processor, dataset, output_path="dendrogram.png", num_samples=5, method='ward'):
@@ -155,6 +153,12 @@ def plot_augmentation_dendrogram(clip_processor, dataset, output_path="dendrogra
     plt.xlabel('Augmentation Type', fontsize=14, labelpad=15)
     plt.ylabel('Distance (1 - Cosine Similarity)', fontsize=14)
     
+    # Add explanation text
+    # plt.figtext(0.5, 0.01, 
+    #             "Augmentations clustered together produce similar effects on image embeddings.\n"
+    #             "Closer augmentations have more similar effects on model perception.",
+    #             ha="center", fontsize=12, bbox=dict(boxstyle="round,pad=0.5", fc="aliceblue", ec="skyblue", alpha=0.8))
+    
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.2)  # More space for rotated labels
     
@@ -165,168 +169,137 @@ def plot_augmentation_dendrogram(clip_processor, dataset, output_path="dendrogra
     
     return avg_distances, aug_keys
 
-def compute_augmentation_metrics(embedding_pt_path, dataset, num_samples=None):
+
+def compute_augmentation_metrics(clip_processor, dataset, num_samples=5):
     """
-    Computes metrics using pre-saved embeddings while ensuring image-path alignment.
+    Computes multiple metrics for each augmentation.
     
     Args:
-        embedding_pt_path (str): Path to embeddings file with image_path entries
-        dataset (ImageTransformDataset): Dataset with .from_file() method
-        num_samples (int): Optional limit on number of samples to process
+        clip_processor (CLIPImageProcessor): Initialized CLIP processor
+        dataset (ImageTransformDataset): Dataset object with augmentations
+        num_samples (int): Number of sample images to use for averaging
         
     Returns:
-        pd.DataFrame: Metrics dataframe with augmentation scores
+        dict: Dictionary with metrics for each augmentation
     """
-    # Load pre-computed embeddings
-    all_embeddings = torch.load(embedding_pt_path)
-    if num_samples is not None:
-        all_embeddings = all_embeddings[:num_samples]
-
-    # Get augmentation keys from first sample's embeddings
-    first_embed = all_embeddings[0]['embeddings']
-    aug_keys = [k for k in first_embed.keys() if k != "original"]
+    # Get sample and augmentation keys
+    sample = dataset[0]
+    aug_keys = [key for key in sample.keys() if key not in ["image_path", "original"]]
     
-    # Initialize metrics storage
+    # Define metrics to measure
     metrics = [
-        "Embedding Similarity", 
-        "Attention Shift",
-        "Patch Similarity",
-        "Edge Preservation",
-        "Detail Preservation"
+        "Embedding Similarity",         # How close is the embedding to the original
+        "Attention Shift",              # How much does the attention map change
+        "Patch Similarity",             # Average patch-level similarity
+        "Edge Preservation",            # How well are edges preserved
+        "Detail Preservation"           # How well are fine details preserved
     ]
-    metric_store = {aug: {m: 0 for m in metrics} for aug in aug_keys}
-    valid_samples = 0
-
-    clip_processor = CLIPImageProcessor(model_name="openai/clip-vit-base-patch32")
-
-    for embed_entry in tqdm(all_embeddings, desc="Processing metrics"):
+    num_metrics = len(metrics)
+    
+    # Store metrics for all augmentations
+    augmentation_metrics = {key: np.zeros(num_metrics) for key in aug_keys}
+    
+    # Process multiple images and average the results
+    for i in range(min(num_samples, len(dataset))):
+        sample = dataset[i]
+        orig_image = sample["original"]
+        
+        # Get original embedding and attention map
+        orig_embedding = clip_processor.get_embeddings([orig_image]).numpy()
         try:
-            # Get original image using dataset's from_file method
-            img_entry = dataset.from_file(embed_entry["image_path"])
+            orig_attn = get_attention_map(clip_processor, orig_image)
             
-            # Verify augmentation keys match
-            if not all(k in img_entry for k in aug_keys):
-                missing = [k for k in aug_keys if k not in img_entry]
-                print(f"Skipping {embed_entry['image_path']}: Missing augmentations {missing}")
-                continue
-
-            # Process each augmentation type
-            for aug_key in aug_keys:
-                # Get pre-computed embeddings
-                orig_emb = np.array(embed_entry['embeddings']['original'])
-                aug_emb = np.array(embed_entry['embeddings'][aug_key])
+            # Convert to numpy arrays for calculations
+            orig_np = np.array(orig_image)
+            
+            # Process each augmentation
+            for key in aug_keys:
+                aug_image = sample[key]
+                aug_np = np.array(aug_image)
                 
-                # 1. Embedding Similarity (from pre-computed)
-                cos_sim = np.dot(orig_emb.flatten(), aug_emb.flatten())
-                cos_sim /= (np.linalg.norm(orig_emb) * np.linalg.norm(aug_emb))
-                metric_store[aug_key]["Embedding Similarity"] += cos_sim
-
-                # Get actual images for other metrics
-                orig_img = np.array(img_entry["original"])
-                aug_img = np.array(img_entry[aug_key])
-
-                # 2. Attention Shift
-                orig_attn = get_attention_map(clip_processor, orig_img)
-                aug_attn = get_attention_map(clip_processor, aug_img)
+                # 1. Embedding Similarity (cosine similarity)
+                aug_embedding = clip_processor.get_embeddings([aug_image]).numpy()
+                cos_sim = cosine_similarity(orig_embedding, aug_embedding)
+                augmentation_metrics[key][0] += cos_sim
+                
+                # 2. Attention Map Shift (inverse of mean squared difference)
+                aug_attn = get_attention_map(clip_processor, aug_image)
                 attn_diff = np.mean((orig_attn - aug_attn) ** 2)
-                metric_store[aug_key]["Attention Shift"] += 1 / (1 + attn_diff)
-
-                # 3. Patch Similarity
-                patch_sim = calculate_patch_similarity(orig_img, aug_img)
-                metric_store[aug_key]["Patch Similarity"] += patch_sim
-
-                # 4. Edge Preservation
-                edge_sim = calculate_edge_similarity(orig_img, aug_img)
-                metric_store[aug_key]["Edge Preservation"] += edge_sim
-
-                # 5. Detail Preservation
-                detail_sim = calculate_detail_preservation(orig_img, aug_img)
-                metric_store[aug_key]["Detail Preservation"] += detail_sim
-
-            valid_samples += 1
-
-        except Exception as e:
-            print(f"Error processing {embed_entry.get('image_path','unknown')}: {str(e)}")
-            continue
-
-    # Normalize metrics by number of successfully processed samples
-    for aug_key in aug_keys:
-        for metric in metrics:
-            metric_store[aug_key][metric] /= valid_samples if valid_samples > 0 else 1
-
-    return pd.DataFrame.from_dict(metric_store, orient='index')
-
-# Helper functions for metric calculations
-def calculate_patch_similarity(orig, aug, grid_size=4):
-    """Calculate patch similarity using MSE-based similarity metric"""
-    h, w = orig.shape[:2]
-    patch_sim = 0
-    for y in range(grid_size):
-        for x in range(grid_size):
-            # Extract patches
-            orig_patch = orig[y*(h//grid_size):(y+1)*(h//grid_size), 
-                            x*(w//grid_size):(x+1)*(w//grid_size)]
-            aug_patch = aug[y*(h//grid_size):(y+1)*(h//grid_size),
-                           x*(w//grid_size):(x+1)*(w//grid_size)]
-            
-            # Calculate MSE and convert to similarity
-            mse = np.mean((orig_patch - aug_patch) ** 2)
-            patch_sim += 1 / (1 + mse / 255**2)
-    return patch_sim / (grid_size**2)
-
-def calculate_edge_similarity(orig, aug):
-    """Calculate edge preservation using gradient-based method"""
-    def get_edges(img):
-        # Convert to grayscale
-        gray = np.dot(img[...,:3], [0.299, 0.587, 0.114])
-        # Calculate gradients
-        dx = np.abs(np.gradient(gray, axis=1))  # Horizontal gradient
-        dy = np.abs(np.gradient(gray, axis=0))  # Vertical gradient
-        return (dx + dy) / 2  # Combine gradients
-    
-    orig_edges = get_edges(orig)
-    aug_edges = get_edges(aug)
-    
-    # Normalize edge maps
-    orig_edges = orig_edges / orig_edges.max() if orig_edges.max() > 0 else orig_edges
-    aug_edges = aug_edges / aug_edges.max() if aug_edges.max() > 0 else aug_edges
-    
-    return 1 - np.mean(np.abs(orig_edges - aug_edges))
-
-def calculate_detail_preservation(orig, aug, grid_size=8):
-    """Calculate detail preservation using patch standard deviation analysis"""
-    # Convert to grayscale
-    orig_gray = np.dot(orig[...,:3], [0.299, 0.587, 0.114])
-    aug_gray = np.dot(aug[...,:3], [0.299, 0.587, 0.114])
-    
-    h, w = orig_gray.shape
-    detail_sim = 0
-    valid_patches = 0
-    
-    for y in range(grid_size):
-        for x in range(grid_size):
-            y_start = y * (h // grid_size)
-            y_end = (y + 1) * (h // grid_size)
-            x_start = x * (w // grid_size)
-            x_end = (x + 1) * (w // grid_size)
-            
-            orig_patch = orig_gray[y_start:y_end, x_start:x_end]
-            aug_patch = aug_gray[y_start:y_end, x_start:x_end]
-            
-            # Skip patches with no variation in original
-            orig_std = np.std(orig_patch)
-            if orig_std < 1e-6:
-                continue
+                # Convert to similarity (higher is better)
+                attn_sim = 1 / (1 + attn_diff)
+                augmentation_metrics[key][1] += attn_sim
                 
-            # Calculate standard deviation ratio
-            aug_std = np.std(aug_patch)
-            std_ratio = aug_std / orig_std
-            
-            # Compute similarity score
-            detail_sim += np.exp(-np.abs(np.log(std_ratio)))
-            valid_patches += 1
+                # 3. Patch Similarity (SSIM would be better but using MSE for simplicity)
+                # Divide image into 4x4 grid and compute average patch similarity
+                h, w = orig_np.shape[:2]
+                patch_h, patch_w = h // 4, w // 4
+                patch_sim = 0
+                for y in range(4):
+                    for x in range(4):
+                        orig_patch = orig_np[y*patch_h:(y+1)*patch_h, x*patch_w:(x+1)*patch_w]
+                        aug_patch = aug_np[y*patch_h:(y+1)*patch_h, x*patch_w:(x+1)*patch_w]
+                        mse = np.mean((orig_patch - aug_patch) ** 2)
+                        # Convert to similarity
+                        patch_sim += 1 / (1 + mse / 255**2)
+                patch_sim /= 16  # Average over all patches
+                augmentation_metrics[key][2] += patch_sim
+                
+                # 4. Edge Preservation (using simple edge detection)
+                # Convert to grayscale
+                orig_gray = np.dot(orig_np[...,:3], [0.299, 0.587, 0.114])
+                aug_gray = np.dot(aug_np[...,:3], [0.299, 0.587, 0.114])
+                
+                # Simple gradient-based edge detection
+                orig_edges = np.abs(np.gradient(orig_gray)[0]) + np.abs(np.gradient(orig_gray)[1])
+                aug_edges = np.abs(np.gradient(aug_gray)[0]) + np.abs(np.gradient(aug_gray)[1])
+                
+                # Normalize
+                orig_edges = orig_edges / orig_edges.max() if orig_edges.max() > 0 else orig_edges
+                aug_edges = aug_edges / aug_edges.max() if aug_edges.max() > 0 else aug_edges
+                
+                # Compute edge similarity
+                edge_sim = 1 - np.mean(np.abs(orig_edges - aug_edges))
+                augmentation_metrics[key][3] += edge_sim
+                
+                # 5. Detail Preservation (high-frequency content preservation)
+                # Simple approximation using difference in standard deviation of small patches
+                detail_sim = 0
+                for y in range(8):  # Use smaller patches for detail analysis
+                    for x in range(8):
+                        y_start, y_end = y * (h // 8), (y + 1) * (h // 8)
+                        x_start, x_end = x * (w // 8), (x + 1) * (w // 8)
+                        
+                        orig_patch = orig_gray[y_start:y_end, x_start:x_end]
+                        aug_patch = aug_gray[y_start:y_end, x_start:x_end]
+                        
+                        # Skip patches with no variation
+                        if np.std(orig_patch) < 1e-6:
+                            continue
+                            
+                        # Compare standard deviations
+                        std_ratio = np.std(aug_patch) / np.std(orig_patch)
+                        # Penalize both reduction and amplification of detail
+                        std_sim = np.exp(-np.abs(np.log(std_ratio)))
+                        detail_sim += std_sim
+                
+                detail_sim /= 64  # Average over all patches
+                augmentation_metrics[key][4] += detail_sim
+                
+        except Exception as e:
+            print(f"Error processing image {i}: {e}")
+            continue
     
-    return detail_sim / valid_patches if valid_patches > 0 else 0.0
+    # Calculate average values across samples
+    for key in aug_keys:
+        augmentation_metrics[key] /= min(num_samples, len(dataset))
+    
+    # Convert to DataFrame for easier manipulation
+    metrics_df = pd.DataFrame({
+        aug: pd.Series(augmentation_metrics[aug], index=metrics)
+        for aug in aug_keys
+    })
+    
+    return metrics_df
 
 
 def plot_augmentation_comparison(metrics_df, output_path="augmentation_comparison.png"):
@@ -761,7 +734,7 @@ def create_augmentation_radar_chart(metrics_df, output_path="augmentation_radar.
 
 
 if __name__ == "__main__":
-    images_dir = "./dataset"  # Directory with a few sample images
+    images_dir = "./attention_mask/"  # Directory with a few sample images
     output_dir = Path("./visualization_output/")
     output_dir.mkdir(exist_ok=True, parents=True)
     
@@ -779,14 +752,14 @@ if __name__ == "__main__":
         clip_processor=clip_processor,
         dataset=dataset,
         output_path=output_dir / "augmentation_dendrogram.png",
-        num_samples=50
+        num_samples=3
     )
     
     # Compute augmentation metrics
     metrics_df = compute_augmentation_metrics(
-        embedding_pt_path="./clip_output/clip_embeddings_incremental.pt",
+        clip_processor=clip_processor,
         dataset=dataset,
-        num_samples=50
+        num_samples=3
     )
 
     # Generate augmentation comparison bar charts
@@ -811,4 +784,6 @@ if __name__ == "__main__":
     create_augmentation_radar_chart(
         metrics_df=metrics_df,
         output_path=output_dir / "augmentation_radar.png",
+        # top_n=5
     )
+
