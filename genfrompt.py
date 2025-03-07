@@ -221,15 +221,15 @@ def compute_augmentation_metrics(embedding_pt_path, dataset, num_samples=None):
                 cos_sim /= (np.linalg.norm(orig_emb) * np.linalg.norm(aug_emb))
                 metric_store[aug_key]["Embedding Similarity"] += cos_sim
 
+                # 2. Attention Shift
+                orig_attn = get_attention_map(clip_processor, img_entry["original"])
+                aug_attn = get_attention_map(clip_processor, img_entry[aug_key])
+                attn_diff = np.mean((orig_attn - aug_attn) ** 2)
+                metric_store[aug_key]["Attention Shift"] += 1 / (1 + attn_diff)
+
                 # Get actual images for other metrics
                 orig_img = np.array(img_entry["original"])
                 aug_img = np.array(img_entry[aug_key])
-
-                # 2. Attention Shift
-                orig_attn = get_attention_map(clip_processor, orig_img)
-                aug_attn = get_attention_map(clip_processor, aug_img)
-                attn_diff = np.mean((orig_attn - aug_attn) ** 2)
-                metric_store[aug_key]["Attention Shift"] += 1 / (1 + attn_diff)
 
                 # 3. Patch Similarity
                 patch_sim = calculate_patch_similarity(orig_img, aug_img)
