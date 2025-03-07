@@ -175,5 +175,5 @@ cython_debug/
 
 dataset/
 /dataset/
-./visualization_output/
-./clip_output/
+/visualization_output/
+/clip_output/
