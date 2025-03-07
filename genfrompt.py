@@ -759,7 +759,7 @@ def create_augmentation_radar_chart(metrics_df, output_path="augmentation_radar.
 
 
 if __name__ == "__main__":
-    images_dir = "./attention_mask/"  # Directory with a few sample images
+    images_dir = "./dataset"  # Directory with a few sample images
     output_dir = Path("./visualization_output/")
     output_dir.mkdir(exist_ok=True, parents=True)
     
@@ -777,14 +777,14 @@ if __name__ == "__main__":
         clip_processor=clip_processor,
         dataset=dataset,
         output_path=output_dir / "augmentation_dendrogram.png",
-        num_samples=3
+        num_samples=50
     )
     
     # Compute augmentation metrics
     metrics_df = compute_augmentation_metrics(
         embedding_pt_path="./clip_output/clip_embeddings_incremental.pt",
         dataset=dataset,
-        num_samples=5
+        num_samples=50
     )
 
     # Generate augmentation comparison bar charts
