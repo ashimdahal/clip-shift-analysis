@@ -672,7 +672,7 @@ def create_augmentation_radar_chart(metrics_df, output_path="augmentation_radar.
     angles += angles[:1]  # Close the loop
     
     # Create figure with subplots
-    cols = min(4, n_augs)  # Max 4 columns
+    cols = min(5, n_augs)  # Max 4 columns
     rows = int(np.ceil(n_augs / cols))
     fig = plt.figure(figsize=(cols*4, rows*4))
     
@@ -748,12 +748,12 @@ if __name__ == "__main__":
     )
     
     # Generate dendrogram visualization
-    avg_distances, aug_keys = plot_augmentation_dendrogram(
-        clip_processor=clip_processor,
-        dataset=dataset,
-        output_path=output_dir / "augmentation_dendrogram.png",
-        num_samples=3
-    )
+    # avg_distances, aug_keys = plot_augmentation_dendrogram(
+    #     clip_processor=clip_processor,
+    #     dataset=dataset,
+    #     output_path=output_dir / "augmentation_dendrogram.png",
+    #     num_samples=3
+    # )
     
     # Compute augmentation metrics
     metrics_df = compute_augmentation_metrics(
@@ -762,24 +762,24 @@ if __name__ == "__main__":
         num_samples=3
     )
 
-    # Generate augmentation comparison bar charts
-    plot_augmentation_comparison(
-        metrics_df=metrics_df,
-        output_path=output_dir / "augmentation_comparison.png"
-    )
-
-    # Generate augmentation heatmap
-    plot_metric_heatmap(
-        metrics_df=metrics_df,
-        output_path=output_dir / "metrics_heatmap.png"
-    )
-
-    # Generate augmentation performance profiles
-    plot_augmentation_profile(
-        metrics_df=metrics_df,
-        output_path=output_dir / "augmentation_profiles.png"
-    )
-
+    # # Generate augmentation comparison bar charts
+    # plot_augmentation_comparison(
+    #     metrics_df=metrics_df,
+    #     output_path=output_dir / "augmentation_comparison.png"
+    # )
+    #
+    # # Generate augmentation heatmap
+    # plot_metric_heatmap(
+    #     metrics_df=metrics_df,
+    #     output_path=output_dir / "metrics_heatmap.png"
+    # )
+    #
+    # # Generate augmentation performance profiles
+    # plot_augmentation_profile(
+    #     metrics_df=metrics_df,
+    #     output_path=output_dir / "augmentation_profiles.png"
+    # )
+    #
     # Generate radar chart visualization
     create_augmentation_radar_chart(
         metrics_df=metrics_df,
