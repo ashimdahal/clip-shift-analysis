@@ -500,6 +500,141 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
     print(f"Saved attention visualization to {output_path}")
     plt.close()
 
+def plot_attention_grids(image_dir, clip_processor, dataset, output_dir="attention_grids", 
+                        num_graphs=5, num_samples_per_graph=7, fig_width=25, 
+                        row_height=2.5, dpi=150):
+    """
+    Generates grid visualizations showing original images, augmentations, and attention maps.
+    
+    Args:
+        image_dir (str): Directory containing images
+        clip_processor (CLIPImageProcessor): Initialized CLIP processor
+        dataset (ImageTransformDataset): Dataset object with augmentations
+        output_dir (str): Output directory for saving grids
+        num_graphs (int): Number of grid figures to generate
+        num_samples_per_graph (int): Number of samples per grid
+        fig_width (int): Width of each output figure in inches
+        row_height (int): Height per row in inches
+        dpi (int): Output image quality
+    """
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True, parents=True)
+    
+    # Get all available image paths
+    all_image_paths = dataset.image_paths.copy()
+    total_images = len(all_image_paths)
+    
+    # Calculate how many samples we can actually process
+    max_possible_graphs = total_images // num_samples_per_graph
+    actual_graphs = min(num_graphs, max_possible_graphs)
+    
+    if actual_graphs < num_graphs:
+        print(f"Warning: Only enough data for {actual_graphs} graphs "
+              f"(requested {num_graphs})")
+    
+    # Get augmentation keys (should be 9)
+    sample = dataset[0]
+    aug_keys = [key for key in sample.keys() if key not in ["image_path", "original"]]
+    num_augments = len(aug_keys)
+    
+    if num_augments != 9:
+        print(f"Warning: Found {num_augments} augmentations, expected 9. "
+              "Layout may be affected.")
+    
+    # Main processing loop for each graph
+    for graph_idx in range(actual_graphs):
+        # Select images for this graph
+        start_idx = graph_idx * num_samples_per_graph
+        end_idx = start_idx + num_samples_per_graph
+        graph_image_paths = all_image_paths[start_idx:end_idx]
+        
+        print(f"\nProcessing graph {graph_idx+1}/{actual_graphs} "
+              f"({len(graph_image_paths)} samples)")
+        
+        # Create figure with appropriate dimensions
+        fig_rows = 2 * len(graph_image_paths)  # 2 rows per sample
+        fig_cols = 10  # Original + 9 augmentations
+        
+        fig, axes = plt.subplots(fig_rows, fig_cols, 
+                                figsize=(fig_width, row_height * fig_rows),
+                                dpi=dpi)
+        
+        # Hide initial axes
+        for ax in axes.flatten():
+            ax.axis('off')
+        
+        # Process each sample in current graph
+        for sample_idx, image_path in enumerate(graph_image_paths):
+            print(f"  Processing sample {sample_idx+1}: {Path(image_path).name}")
+            row_base = sample_idx * 2  # Base row index for this sample
+            
+            try:
+                # Get dataset index and load data
+                idx = dataset.image_paths.index(image_path)
+                sample_data = dataset[idx]
+                orig_image = sample_data["original"]
+                
+                # Process original image
+                orig_attn = get_attention_map(clip_processor, orig_image)
+                orig_overlay = overlay_attention(orig_image, orig_attn)
+                orig_embedding = clip_processor.get_embeddings([orig_image]).numpy()
+                
+                # Plot original image and attention
+                axes[row_base, 0].imshow(orig_image)
+                axes[row_base, 0].set_title("Original", fontsize=8)
+                axes[row_base, 0].axis('off')
+                
+                axes[row_base+1, 0].imshow(orig_overlay)
+                axes[row_base+1, 0].axis('off')
+                
+                # Process augmentations
+                for aug_idx, aug_key in enumerate(aug_keys):
+                    col = aug_idx + 1  # Columns 1-9
+                    try:
+                        aug_image = sample_data[aug_key]
+                        
+                        # Get attention and embedding
+                        aug_attn = get_attention_map(clip_processor, aug_image)
+                        aug_overlay = overlay_attention(aug_image, aug_attn)
+                        aug_embedding = clip_processor.get_embeddings([aug_image]).numpy()
+                        
+                        # Calculate similarity
+                        cos_sim = np.dot(orig_embedding.flatten(), aug_embedding.flatten()) / (
+                            np.linalg.norm(orig_embedding) * np.linalg.norm(aug_embedding)
+                        
+                        # Plot augmented image
+                        axes[row_base, col].imshow(aug_image)
+                        title = f"{aug_key}\nSim: {cos_sim:.2f}"
+                        axes[row_base, col].set_title(title, fontsize=6)
+                        axes[row_base, col].axis('off')
+                        
+                        # Plot attention overlay
+                        axes[row_base+1, col].imshow(aug_overlay)
+                        axes[row_base+1, col].axis('off')
+                        
+                    except Exception as e:
+                        error_msg = f"Error: {str(e)[:15]}..."
+                        axes[row_base, col].text(0.5, 0.5, error_msg,
+                                                ha='center', va='center', fontsize=5)
+                        axes[row_base, col].axis('off')
+                        axes[row_base+1, col].axis('off')
+                        
+            except Exception as e:
+                error_msg = f"Sample error: {str(e)[:20]}..."
+                for col in range(fig_cols):
+                    axes[row_base, col].text(0.5, 0.5, error_msg,
+                                            ha='center', va='center', fontsize=6)
+                    axes[row_base, col].axis('off')
+                    axes[row_base+1, col].axis('off')
+        
+        # Finalize and save figure
+        plt.subplots_adjust(wspace=0.05, hspace=0.15)
+        fig.savefig(output_path / f"attention_grid_{graph_idx+1}.png", 
+                   bbox_inches='tight', dpi=dpi)
+        plt.close()
+        print(f"Saved graph {graph_idx+1} to {output_path}/attention_grid_{graph_idx+1}.png")
+
 if __name__ == "__main__":
     # Directory containing a single image (make sure this directory contains input_image.jpg)
     single_image_dir = "./input_dir/"  
@@ -530,6 +665,17 @@ if __name__ == "__main__":
         image_dir=images_dir,
         clip_processor=clip_processor,
         dataset=dataset,
-        output_path=str(output_dir / "attention_maps.png"),
-        num_samples=3  # Process 3 sample images
+        output_path=str(output_dir / "attention_maps_5.png"),
+        num_samples=5  # Process 3 sample images
+    )
+
+    plot_attention_grids(
+        image_dir=images_dir,
+        clip_processor=clip_processor,
+        dataset=dataset,
+        output_dir=output_dir,
+        num_graphs=5,
+        num_samples_per_graph=7,
+        fig_width=30,
+        row_height=2
     )
