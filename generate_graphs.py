@@ -501,7 +501,7 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
     plt.close()
 
 def plot_attention_grids(image_dir, clip_processor, dataset, output_dir="attention_grids", 
-                        num_graphs=5, num_samples_per_graph=7, fig_width=25, 
+                        num_graphs=5, num_samples_per_graph=7, fig_width=18, 
                         row_height=2.5, dpi=150):
     """
     Generates grid visualizations showing original images, augmentations, and attention maps.
@@ -582,7 +582,7 @@ def plot_attention_grids(image_dir, clip_processor, dataset, output_dir="attenti
                 
                 # Plot original image and attention
                 axes[row_base, 0].imshow(orig_image)
-                axes[row_base, 0].set_title("Original", fontsize=8)
+                axes[row_base, 0].set_title("Original", fontsize=12)
                 axes[row_base, 0].axis('off')
                 
                 axes[row_base+1, 0].imshow(orig_overlay)
@@ -599,14 +599,10 @@ def plot_attention_grids(image_dir, clip_processor, dataset, output_dir="attenti
                         aug_overlay = overlay_attention(aug_image, aug_attn)
                         aug_embedding = clip_processor.get_embeddings([aug_image]).numpy()
                         
-                        # Calculate similarity
-                        cos_sim = np.dot(orig_embedding.flatten(), aug_embedding.flatten()) / (
-                            np.linalg.norm(orig_embedding) * np.linalg.norm(aug_embedding)
-                        
                         # Plot augmented image
                         axes[row_base, col].imshow(aug_image)
-                        title = f"{aug_key}\nSim: {cos_sim:.2f}"
-                        axes[row_base, col].set_title(title, fontsize=6)
+                        title = f"{aug_key.replace('_',' ')}"
+                        axes[row_base, col].set_title(title, fontsize=12)
                         axes[row_base, col].axis('off')
                         
                         # Plot attention overlay
@@ -629,8 +625,17 @@ def plot_attention_grids(image_dir, clip_processor, dataset, output_dir="attenti
                     axes[row_base+1, col].axis('off')
         
         # Finalize and save figure
-        plt.subplots_adjust(wspace=0.05, hspace=0.15)
-        fig.savefig(output_path / f"attention_grid_{graph_idx+1}.png", 
+        # plt.subplots_adjust(wspace=0.05, hspace=0.15)
+        plt.subplots_adjust(
+            wspace=0,  
+            hspace=0.1,   # Reduce vertical spacing
+            left=0,
+            right=1,
+            top=0.95,
+            bottom=0
+        )
+        fig.tight_layout(pad=0, w_pad=0, h_pad=0.1)  # Squeeze everything
+        fig.savefig(output_path / f"attention_grid_full_page_{graph_idx+1}.png", 
                    bbox_inches='tight', dpi=dpi)
         plt.close()
         print(f"Saved graph {graph_idx+1} to {output_path}/attention_grid_{graph_idx+1}.png")
@@ -647,7 +652,7 @@ if __name__ == "__main__":
 
     # plot_distance_bar_chart(embedding_file, output_path="distance_bar_chart.png")
     # plot_distance_kde(embedding_file, output_path="distance_kde.png")
-    images_dir = "./attention_mask/"  # Directory with a few sample images
+    images_dir = "./dataset/"  # Directory with a few sample images
     output_dir = Path("./visualization_output/")
     output_dir.mkdir(exist_ok=True, parents=True)
     
@@ -661,13 +666,13 @@ if __name__ == "__main__":
     )
     
     # Generate and save attention maps
-    plot_attention_maps(
-        image_dir=images_dir,
-        clip_processor=clip_processor,
-        dataset=dataset,
-        output_path=str(output_dir / "attention_maps_5.png"),
-        num_samples=5  # Process 3 sample images
-    )
+    # plot_attention_maps(
+    #     image_dir=images_dir,
+    #     clip_processor=clip_processor,
+    #     dataset=dataset,
+    #     output_path=str(output_dir / "attention_maps_5.png"),
+    #     num_samples=5  # Process 3 sample images
+    # )
 
     plot_attention_grids(
         image_dir=images_dir,
@@ -676,6 +681,6 @@ if __name__ == "__main__":
         output_dir=output_dir,
         num_graphs=5,
         num_samples_per_graph=7,
-        fig_width=30,
+        fig_width=23,
         row_height=2
     )
