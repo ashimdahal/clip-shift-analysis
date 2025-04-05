@@ -432,7 +432,7 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
     num_augments = len(aug_keys)
     
     # Create figure with subplots
-    fig, axes = plt.subplots(num_images, num_augments + 2, figsize=(num_augments * 3 + 6, num_images * 3))
+    fig, axes = plt.subplots(num_images, num_augments + 2, figsize=(num_augments * 3 + 10, num_images * 3 + 3.5))
     if num_images == 1:
         axes = np.expand_dims(axes, axis=0)  # Handle case with single image
     
@@ -456,11 +456,11 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
             
             # Plot original image and its attention
             axes[i, 0].imshow(orig_image)
-            axes[i, 0].set_title("Original", fontsize=12)
+            axes[i, 0].set_title("Original\nImage", fontsize=16)
             axes[i, 0].axis("off")
             
             axes[i, 1].imshow(orig_overlay)
-            axes[i, 1].set_title("Attention Map", fontsize=12)
+            axes[i, 1].set_title("Original\nAttention Map", fontsize=16)
             axes[i, 1].axis("off")
             
             # Process each augmentation
@@ -480,7 +480,7 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
                     
                     # Plot augmented image with attention overlay
                     axes[i, j + 2].imshow(aug_overlay)
-                    axes[i, j + 2].set_title(f"{key}\nSim: {cos_sim:.2f}", fontsize=10)
+                    axes[i, j + 2].set_title(f"{key.replace('_',' ')}\nSim: {cos_sim:.2f}", fontsize=16)
                     axes[i, j + 2].axis("off")
                     
                 except Exception as e:
@@ -495,7 +495,7 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
                           horizontalalignment='center', verticalalignment='center')
             axes[i, 0].axis("off")
     
-    plt.tight_layout()
+    # plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved attention visualization to {output_path}")
     plt.close()
@@ -652,7 +652,7 @@ if __name__ == "__main__":
 
     # plot_distance_bar_chart(embedding_file, output_path="distance_bar_chart.png")
     # plot_distance_kde(embedding_file, output_path="distance_kde.png")
-    images_dir = "./dataset/"  # Directory with a few sample images
+    images_dir = "./attention_mask/"  # Directory with a few sample images
     output_dir = Path("./visualization_output/")
     output_dir.mkdir(exist_ok=True, parents=True)
     
@@ -666,21 +666,21 @@ if __name__ == "__main__":
     )
     
     # Generate and save attention maps
-    # plot_attention_maps(
-    #     image_dir=images_dir,
-    #     clip_processor=clip_processor,
-    #     dataset=dataset,
-    #     output_path=str(output_dir / "attention_maps_5.png"),
-    #     num_samples=5  # Process 3 sample images
-    # )
-
-    plot_attention_grids(
+    plot_attention_maps(
         image_dir=images_dir,
         clip_processor=clip_processor,
         dataset=dataset,
-        output_dir=output_dir,
-        num_graphs=5,
-        num_samples_per_graph=7,
-        fig_width=23,
-        row_height=2
+        output_path=str(output_dir / "attention_maps_5.png"),
+        num_samples=5  # Process 3 sample images
     )
+
+    # plot_attention_grids(
+    #     image_dir=images_dir,
+    #     clip_processor=clip_processor,
+    #     dataset=dataset,
+    #     output_dir=output_dir,
+    #     num_graphs=5,
+    #     num_samples_per_graph=7,
+    #     fig_width=23,
+    #     row_height=2
+    # )

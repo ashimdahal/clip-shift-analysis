@@ -277,7 +277,7 @@ def calculate_patch_similarity(orig, aug, grid_size=4):
             
             # Calculate MSE and convert to similarity
             mse = np.mean((orig_patch - aug_patch) ** 2)
-            patch_sim += 1 / (1 + mse / 255**2)
+            patch_sim += 1 / (1 + mse / 255)
     return patch_sim / (grid_size**2)
 
 def calculate_edge_similarity(orig, aug):
@@ -794,24 +794,24 @@ if __name__ == "__main__":
         num_samples=2000
     )
 
-    # # Generate augmentation comparison bar charts
-    # plot_augmentation_comparison(
-    #     metrics_df=metrics_df,
-    #     output_path=output_dir / "augmentation_comparison.png"
-    # )
-    #
-    # # Generate augmentation heatmap
-    # plot_metric_heatmap(
-    #     metrics_df=metrics_df,
-    #     output_path=output_dir / "metrics_heatmap.png"
-    # )
-    #
-    # # Generate augmentation performance profiles
-    # plot_augmentation_profile(
-    #     metrics_df=metrics_df,
-    #     output_path=output_dir / "augmentation_profiles.png"
-    # )
-    #
+    # Generate augmentation comparison bar charts
+    plot_augmentation_comparison(
+        metrics_df=metrics_df,
+        output_path=output_dir / "augmentation_comparison.png"
+    )
+
+    # Generate augmentation heatmap
+    plot_metric_heatmap(
+        metrics_df=metrics_df,
+        output_path=output_dir / "metrics_heatmap.png"
+    )
+
+    # Generate augmentation performance profiles
+    plot_augmentation_profile(
+        metrics_df=metrics_df,
+        output_path=output_dir / "augmentation_profiles.png"
+    )
+
     # Generate radar chart visualization
     create_augmentation_radar_chart(
         metrics_df=metrics_df,
