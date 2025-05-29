@@ -56,7 +56,7 @@ def plot_image_augmentations(image_dir, image_size=(512, 512), output_path="augm
     fig.suptitle("Original Image and Augmentations", fontsize=16, fontweight="bold", color="#444444")
     
     # Save the figure and display it.
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.savefig(output_path, dpi=1000, bbox_inches="tight")
     plt.show()
     print(f"Visualization saved to {output_path}")
 
@@ -495,8 +495,7 @@ def plot_attention_maps(image_dir, clip_processor, dataset, output_path="attenti
                           horizontalalignment='center', verticalalignment='center')
             axes[i, 0].axis("off")
     
-    # plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=800, bbox_inches='tight')
     print(f"Saved attention visualization to {output_path}")
     plt.close()
 
